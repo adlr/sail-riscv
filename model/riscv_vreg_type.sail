@@ -97,6 +97,8 @@ enum wvxfunct6    = { WVX_VADD, WVX_VSUB, WVX_VADDU, WVX_VSUBU, WVX_VWMUL, WVX_V
 
 enum wxfunct6     = { WX_VADD, WX_VSUB, WX_VADDU, WX_VSUBU }
 
+enum zvbbfunct6   = { ZVBB_VCLZ, ZVBB_VCPOP, ZVBB_VCTZ, ZVBB_VBREV }
+
 enum vext2funct6  = { VEXT2_ZVF2, VEXT2_SVF2 }
 
 enum vext4funct6  = { VEXT4_ZVF4, VEXT4_SVF4 }

@@ -1512,6 +1512,72 @@ mapping wvvtype_mnemonic : wvvfunct6 <-> string = {
 mapping clause assembly = WVVTYPE(funct6, vm, vs2, vs1, vd)
   <-> wvvtype_mnemonic(funct6) ^ spc() ^ vreg_name(vd) ^ sep() ^ vreg_name(vs2) ^ sep() ^ vreg_name(vs1) ^ maybe_vmask(vm)
 
+/* *************************** ZVBB (VVTYPE Widening) *************************** */
+union clause ast = VWSLL_VV : (bits(1), regidx, regidx, regidx)
+
+mapping clause encdec = VWSLL_VV(vm, vs2, vs1, vd) if haveRVV()
+  <-> 0b110101 @ vm @ vs2 @ vs1 @ 0b010 /* OPIVV */ @ vd @ 0b1010111 /* OP-V */ if haveZvbb()
+
+function clause execute(VWSLL_VV(vm, vs2, vs1, vd)) = {
+  let SEW      = get_sew();
+  let LMUL_pow = get_lmul_pow();
+  let num_elem = get_num_elem(LMUL_pow, SEW);
+  let SEW_widen      = SEW * 2;
+  let LMUL_pow_widen = LMUL_pow + 1;
+
+  if  not(valid_rd_mask(vd, vm)) | not(valid_reg_overlap(vs1, vd, LMUL_pow, LMUL_pow_widen)) | 
+      not(valid_reg_overlap(vs2, vd, LMUL_pow, LMUL_pow_widen)) | not(valid_eew_emul(SEW_widen, LMUL_pow_widen)) 
+  then { handle_illegal(); return RETIRE_FAIL };
+
+  let 'n = num_elem;
+  let 'm = SEW;
+  let 'o = SEW_widen;
+
+  let vm_val  : vector('n, dec, bool)     = read_vmask(num_elem, vm, vreg_name("v0"));
+  let vd_val  : vector('n, dec, bits('o)) = read_vreg(num_elem, SEW_widen, LMUL_pow_widen, vd);
+  let vs1_val : vector('n, dec, bits('m)) = read_vreg(num_elem, SEW, LMUL_pow, vs1);
+  let vs2_val : vector('n, dec, bits('m)) = read_vreg(num_elem, SEW, LMUL_pow, vs2);
+  result      : vector('n, dec, bits('o)) = undefined;
+  mask        : vector('n, dec, bool)     = undefined;
+
+  assert(8 <= SEW_widen & SEW_widen <= 64);
+  (result, mask) = init_masked_result(num_elem, SEW_widen, LMUL_pow_widen, vd_val, vm_val);
+
+  foreach (i from 0 to (num_elem - 1)) {
+    if mask[i] then {
+      let shmask  : bits('o) = match SEW_widen {
+        8  => EXTZ(0b111),
+        16 => EXTZ(0b1111),
+        32 => EXTZ(0b11111)
+      };
+      let shamt : bits('o) = EXTZ(vs1_val[i]) & shmask;
+      result[i] = EXTZ(vs2_val[i]) << shamt
+    }
+  };
+
+  // compiles!
+  // foreach (i from 0 to (num_elem - 1)) {
+  //   if mask[i] then {
+  //     let shmask  : bits('o) = match SEW_widen {
+  //       8  => EXTZ(0b111),
+  //       16 => EXTZ(0b1111),
+  //       32 => EXTZ(0b11111)
+  //     };
+  //     let in1   : bits('o) = EXTZ(vs1_val[i]);
+  //     let shamt : bits('o) = in1 & shmask;
+  //     let inval : bits('o) = EXTZ(vs2_val[i]);
+  //     result[i] = inval << shamt
+  //   }
+  // };
+
+  write_vreg(num_elem, SEW_widen, LMUL_pow_widen, vd, result);
+  vstart = EXTZ(0b0);
+  RETIRE_SUCCESS
+}
+
+mapping clause assembly = VWSLL_VV(vm, vs2, vs1, vd)
+  <-> "vwsll.vv" ^ spc() ^ vreg_name(vd) ^ sep() ^ vreg_name(vs2) ^ sep() ^ vreg_name(vs1) ^ maybe_vmask(vm)
+
 /* *************************** OPMVV (WVTYPE Widening) *************************** */
 union clause ast = WVTYPE : (wvfunct6, bits(1), regidx, regidx, regidx)
 
@@ -1639,6 +1705,97 @@ mapping clause assembly = WMVVTYPE(funct6, vm, vs2, vs1, vd)
   <-> wmvvtype_mnemonic(funct6) ^ spc() ^ vreg_name(vd) ^ sep() ^ vreg_name(vs1) ^ sep() ^ vreg_name(vs2) ^ maybe_vmask(vm)
 
 /* ****************************** OPMVV (VXUNARY0) ******************************* */
+/* ******************** Zbvv (SEW source) ******************** */
+union clause ast = ZVBBTYPE : (zvbbfunct6, bits(1), regidx, regidx)
+
+mapping zvbb_vs1 : zvbbfunct6 <-> bits(5) = {
+  ZVBB_VCLZ   <-> 0b01100,
+  ZVBB_VCTZ   <-> 0b01101,
+  ZVBB_VCPOP  <-> 0b01110,
+  ZVBB_VBREV  <-> 0b01010
+}
+
+mapping clause encdec = ZVBBTYPE(funct6, vm, vs2, vd) if haveRVV()
+  <-> 0b010010 @ vm @ vs2 @ zvbb_vs1(funct6) @ 0b010 @ vd @ 0b1010111 if haveRVV()
+  /* TODO: ^^ SET OPMVV and OP-V bits when they are known */
+
+function CLZ forall 'n, 64 >= 'n > 0. (value: bits('n)) -> bits('n) = {
+  result : nat = 0;
+  done : bool = false;
+  foreach (i from (length(value) - 1) downto 0)
+    if not(done) then if value[i] == bitzero
+                    then result = result + 1
+                    else done = true;
+  to_bits(length(value), result)
+}
+
+function CTZ forall 'n, 64 >= 'n > 0. (value: bits('n)) -> bits('n) = {
+  result : nat = 0;
+  done : bool = false;
+  foreach (i from 0 to (length(value) - 1))
+    if not(done) then if value[i] == bitzero
+                    then result = result + 1
+                    else done = true;
+  to_bits(length(value), result)
+}
+
+function CPOP forall 'n, 64 >= 'n > 0. (value: bits('n)) -> bits('n) = {
+  result : nat = 0;
+  done : bool = false;
+  foreach (i from 0 to (length(value) - 1))
+    if value[i] == bitzero then result = result + 1;
+  to_bits(length(value), result)
+}
+
+function BREV forall 'n, 64 >= 'n > 0. (value: bits('n)) -> bits('n) = {
+  result = value;
+  foreach (i from 0 to (length(value) - 1))
+    result[length(value) - 1 - i] = value[i];
+  result
+}
+
+function clause execute(ZVBBTYPE(funct6, vm, vs2, vd)) = {
+  let SEW = get_sew();
+  let LMUL_pow = get_lmul_pow();
+  let num_elem = get_num_elem(LMUL_pow, SEW);
+
+  let 'n = num_elem;
+  let 'm = SEW;
+
+  let vm_val  : vector('n, dec, bool)     = read_vmask(num_elem, vm, vreg_name("v0"));
+  let vd_val  : vector('n, dec, bits('m)) = read_vreg(num_elem, SEW, LMUL_pow, vd);
+  let vs2_val : vector('n, dec, bits('m)) = read_vreg(num_elem, SEW, LMUL_pow, vs2);
+  result      : vector('n, dec, bits('m)) = undefined;
+  mask        : vector('n, dec, bool)     = undefined;
+
+  (result, mask) = init_masked_result(num_elem, SEW, LMUL_pow, vd_val, vm_val);
+
+  foreach (i from 0 to (num_elem - 1)) {
+    if mask[i] then {
+      result[i] = match funct6 {
+        ZVBB_VCLZ  => CLZ(vs2_val[i]),
+        ZVBB_VCPOP => CPOP(vs2_val[i]),
+        ZVBB_VCTZ  => CTZ(vs2_val[i]),
+        ZVBB_VBREV  => BREV(vs2_val[i])
+      }
+    }
+  };
+
+  write_vreg(num_elem, SEW, LMUL_pow, vd, result);
+  vstart = EXTZ(0b0);
+  RETIRE_SUCCESS
+}
+
+mapping zvbbtype_mnemonic : zvbbfunct6 <-> string = {
+  ZVBB_VCLZ  <-> "vclz.v",
+  ZVBB_VCPOP <-> "vcpop.v",
+  ZVBB_VCTZ  <-> "vctz.v",
+  ZVBB_VBREV <-> "vbrev.v"
+}
+
+mapping clause assembly = ZVBBTYPE(funct6, vm, vs2, vd)
+  <-> zvbbtype_mnemonic(funct6) ^ spc() ^ vreg_name(vd) ^ sep() ^ vreg_name(vs2) ^ maybe_vmask(vm)
+
 /* ******************* Vector Integer Extension (SEW/2 source) ******************* */
 union clause ast = VEXT2TYPE : (vext2funct6, bits(1), regidx, regidx)
 
@@ -2157,6 +2314,108 @@ mapping wvxtype_mnemonic : wvxfunct6 <-> string = {
 
 mapping clause assembly = WVXTYPE(funct6, vm, vs2, rs1, vd)
   <-> wvxtype_mnemonic(funct6) ^ spc() ^ vreg_name(vd) ^ sep() ^ vreg_name(vs2) ^ sep() ^ reg_name(rs1) ^ maybe_vmask(vm)
+
+/* *************************** ZVBB (VXTYPE Widening) *************************** */
+union clause ast = VWSLL_VX : (bits(1), regidx, regidx, regidx)
+
+mapping clause encdec = VWSLL_VX(vm, vs2, rs1, vd) if haveRVV()
+  <-> 0b110101 @ vm @ vs2 @ rs1 @ 0b110 @ vd @ 0b1010111 if haveZvbb()
+
+function clause execute(VWSLL_VX(vm, vs2, rs1, vd)) = {
+  let SEW      = get_sew();
+  let LMUL_pow = get_lmul_pow();
+  let num_elem = get_num_elem(LMUL_pow, SEW);
+  let SEW_widen      = SEW * 2;
+  let LMUL_pow_widen = LMUL_pow + 1;
+
+  if  not(valid_rd_mask(vd, vm)) | not(valid_reg_overlap(vs2, vd, LMUL_pow, LMUL_pow_widen)) | 
+      not(valid_eew_emul(SEW_widen, LMUL_pow_widen)) 
+  then { handle_illegal(); return RETIRE_FAIL };
+
+  let 'n = num_elem;
+  let 'm = SEW;
+  let 'o = SEW_widen;
+
+  let vm_val  : vector('n, dec, bool)     = read_vmask(num_elem, vm, vreg_name("v0"));
+  let vd_val  : vector('n, dec, bits('o)) = read_vreg(num_elem, SEW_widen, LMUL_pow_widen, vd);
+  let rs1_val : bits('m)                  = get_scalar(rs1, SEW);
+  let vs2_val : vector('n, dec, bits('m)) = read_vreg(num_elem, SEW, LMUL_pow, vs2);
+  result      : vector('n, dec, bits('o)) = undefined;
+  mask        : vector('n, dec, bool)     = undefined;
+
+  assert(8 <= SEW_widen & SEW_widen <= 64);
+  (result, mask) = init_masked_result(num_elem, SEW_widen, LMUL_pow_widen, vd_val, vm_val);
+
+  foreach (i from 0 to (num_elem - 1)) {
+    if mask[i] then {
+      let shmask  : bits('o) = match SEW_widen {
+        8  => EXTZ(0b111),
+        16 => EXTZ(0b1111),
+        32 => EXTZ(0b11111)
+      };
+      let shamt : bits('o) = EXTZ(rs1_val) & shmask;
+      result[i] = EXTZ(vs2_val[i]) << shamt
+    }
+  };
+
+  write_vreg(num_elem, SEW_widen, LMUL_pow_widen, vd, result);
+  vstart = EXTZ(0b0);
+  RETIRE_SUCCESS
+}
+
+mapping clause assembly = VWSLL_VX(vm, vs2, rs1, vd)
+  <-> "vwsll.vx" ^ spc() ^ vreg_name(vd) ^ sep() ^ vreg_name(vs2) ^ sep() ^ reg_name(rs1) ^ maybe_vmask(vm)
+
+/* *************************** ZVBB (VITYPE Widening) *************************** */
+union clause ast = VWSLL_VI : (bits(1), regidx, bits(5), regidx)
+
+mapping clause encdec = VWSLL_VI(vm, vs2, uimm, vd) if haveRVV()
+  <-> 0b110101 @ vm @ vs2 @ uimm @ 0b110 /*OPIVI*/ @ vd @ 0b1010111 /*OP-V*/ if haveZvbb()
+
+function clause execute(VWSLL_VI(vm, vs2, uimm, vd)) = {
+  let SEW      = get_sew();
+  let LMUL_pow = get_lmul_pow();
+  let num_elem = get_num_elem(LMUL_pow, SEW);
+  let SEW_widen      = SEW * 2;
+  let LMUL_pow_widen = LMUL_pow + 1;
+
+  if  not(valid_rd_mask(vd, vm)) | not(valid_reg_overlap(vs2, vd, LMUL_pow, LMUL_pow_widen)) | 
+      not(valid_eew_emul(SEW_widen, LMUL_pow_widen)) 
+  then { handle_illegal(); return RETIRE_FAIL };
+
+  let 'n = num_elem;
+  let 'm = SEW;
+  let 'o = SEW_widen;
+
+  let imm_val : bits('o) = EXTZ(uimm);
+  let vm_val  : vector('n, dec, bool)     = read_vmask(num_elem, vm, vreg_name("v0"));
+  let vd_val  : vector('n, dec, bits('o)) = read_vreg(num_elem, SEW_widen, LMUL_pow_widen, vd);
+  let vs2_val : vector('n, dec, bits('m)) = read_vreg(num_elem, SEW, LMUL_pow, vs2);
+  result      : vector('n, dec, bits('o)) = undefined;
+  mask        : vector('n, dec, bool)     = undefined;
+
+  assert(8 <= SEW_widen & SEW_widen <= 64);
+  (result, mask) = init_masked_result(num_elem, SEW_widen, LMUL_pow_widen, vd_val, vm_val);
+
+  foreach (i from 0 to (num_elem - 1)) {
+    if mask[i] then {
+      let shmask  : bits('o) = match SEW_widen {
+        8  => EXTZ(0b111),
+        16 => EXTZ(0b1111),
+        32 => EXTZ(0b11111)
+      };
+      let shamt : bits('o) = imm_val & shmask;
+      result[i] = EXTZ(vs2_val[i]) << shamt
+    }
+  };
+
+  write_vreg(num_elem, SEW_widen, LMUL_pow_widen, vd, result);
+  vstart = EXTZ(0b0);
+  RETIRE_SUCCESS
+}
+
+mapping clause assembly = VWSLL_VI(vm, vs2, rs1, vd)
+  <-> "vwsll.vi" ^ spc() ^ vreg_name(vd) ^ sep() ^ vreg_name(vs2) ^ sep() ^ reg_name(rs1) ^ maybe_vmask(vm)
 
 /* *************************** OPMVX (WXTYPE Widening) *************************** */
 union clause ast = WXTYPE : (wxfunct6, bits(1), regidx, regidx, regidx)
