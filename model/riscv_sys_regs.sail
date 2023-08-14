@@ -585,7 +585,7 @@ val plat_enable_svhad = {ocaml: "Platform.enable_svhad",
                          lem: "plat_enable_svhad"} : unit -> bool
 
 bitfield MEnvCfg : bits(64) = {
-  HADE : 61
+  ADUE : 61
   /* Fill in other fields when adding support for them */
 }
 register menvcfg : MEnvCfg
@@ -593,7 +593,7 @@ register menvcfg : MEnvCfg
 function legalize_menvcfg_high(c : MEnvCfg, value : bits(32)) -> MEnvCfg = {
   let newval = Mk_MEnvCfg(value @ to_bits(32, 0));
   if plat_enable_svhad()
-  then update_HADE(c, newval.HADE())
+  then update_ADUE(c, newval.ADUE())
   else c
 }
 
