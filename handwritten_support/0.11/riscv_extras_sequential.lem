@@ -111,9 +111,9 @@ val plat_enable_dirty_update : unit -> bool
 let plat_enable_dirty_update () = false
 declare ocaml target_rep function plat_enable_dirty_update = `Platform.enable_dirty_update`
 
-val plat_enable_svadu : unit -> bool
-let plat_enable_svadu () = false
-declare ocaml target_rep function plat_enable_svadu = `Platform.enable_svadu`
+val plat_enable_svhad : unit -> bool
+let plat_enable_svhad () = false
+declare ocaml target_rep function plat_enable_svhad = `Platform.enable_svhad`
 
 val plat_enable_misaligned_access : unit -> bool
 let plat_enable_misaligned_access () = false

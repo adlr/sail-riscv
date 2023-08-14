@@ -124,5 +124,5 @@ function flush_TLB_Entry(e, asid, addr) = {
 }
 
 function should_update_PTE_bits() -> bool = {
-  plat_enable_dirty_update() | (plat_enable_svadu() & menvcfg.HADE() == 0b1)
+  plat_enable_dirty_update() | (plat_enable_svhad() & menvcfg.HADE() == 0b1)
 }

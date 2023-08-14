@@ -112,7 +112,7 @@ char *sailcov_file = NULL;
 
 static struct option options[] = {
     {"enable-dirty-update",         no_argument,       0, 'd'},
-    {"enable-svadu",                no_argument,       0, 'u'},
+    {"enable-svhad",                no_argument,       0, 'u'},
     {"enable-misaligned",           no_argument,       0, 'm'},
     {"enable-pmp",                  no_argument,       0, 'P'},
     {"enable-next",                 no_argument,       0, 'N'},
@@ -264,8 +264,8 @@ char *process_args(int argc, char **argv)
       rv_enable_dirty_update = true;
       break;
     case 'u':
-      fprintf(stderr, "enabling svadu.\n");
-      rv_enable_svadu = true;
+      fprintf(stderr, "enabling svhad.\n");
+      rv_enable_svhad = true;
       break;
     case 'm':
       fprintf(stderr, "enabling misaligned access.\n");
@@ -363,8 +363,8 @@ char *process_args(int argc, char **argv)
       break;
     }
   }
-  if (rv_enable_svadu && rv_enable_dirty_update) {
-    fprintf(stderr, "Can't enable dirty update and Svadu simultaneously.\n");
+  if (rv_enable_svhad && rv_enable_dirty_update) {
+    fprintf(stderr, "Can't enable dirty update and Svhad simultaneously.\n");
     exit(1);
   }
   if (do_dump_dts)

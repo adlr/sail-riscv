@@ -579,10 +579,10 @@ function retire_instruction() -> unit = {
  *       for this function is unavailable when it's first encountered here.
  *       Hence it appears here.
  */
-val plat_enable_svadu = {ocaml: "Platform.enable_svadu",
-                         interpreter: "Platform.enable_svadu",
-                         c: "plat_enable_svadu",
-                         lem: "plat_enable_svadu"} : unit -> bool
+val plat_enable_svhad = {ocaml: "Platform.enable_svhad",
+                         interpreter: "Platform.enable_svhad",
+                         c: "plat_enable_svhad",
+                         lem: "plat_enable_svhad"} : unit -> bool
 
 bitfield MEnvCfg : bits(64) = {
   HADE : 61
@@ -592,7 +592,7 @@ register menvcfg : MEnvCfg
 
 function legalize_menvcfg_high(c : MEnvCfg, value : bits(32)) -> MEnvCfg = {
   let newval = Mk_MEnvCfg(value @ to_bits(32, 0));
-  if plat_enable_svadu()
+  if plat_enable_svhad()
   then update_HADE(c, newval.HADE())
   else c
 }
