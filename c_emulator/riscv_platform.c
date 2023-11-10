@@ -37,6 +37,16 @@ bool sys_enable_zfinx(unit u)
   return rv_enable_zfinx;
 }
 
+bool sys_enable_writable_fiom(unit u)
+{
+  return rv_enable_writable_fiom;
+}
+
+bool sys_enable_vext(unit u)
+{
+  return rv_enable_vext;
+}
+
 bool sys_enable_writable_misa(unit u)
 {
   return rv_enable_writable_misa;
